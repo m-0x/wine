@@ -1280,9 +1280,10 @@ HRESULT WINAPI SoftpubAuthenticode(CRYPT_PROVIDER_DATA *data)
 
                 if (disallowed)
                 {
+                    CRYPT_HASH_BLOB blob = { size, hash };
                     PCCERT_CONTEXT found = CertFindCertificateInStore(
                      disallowed, X509_ASN_ENCODING, 0, CERT_FIND_SIGNATURE_HASH,
-                     hash, NULL);
+                     &blob, NULL);
 
                     if (found)
                     {
