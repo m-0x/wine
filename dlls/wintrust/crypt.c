@@ -32,6 +32,7 @@
 #include "mssip.h"
 #include "imagehlp.h"
 #include "winternl.h"
+#include "wintrust_priv.h"
 
 #include "wine/debug.h"
 
@@ -1697,7 +1698,86 @@ BOOL WINAPI CryptSIPRemoveSignedDataMsg(SIP_SUBJECTINFO* pSubjectInfo,
 BOOL WINAPI CryptSIPVerifyIndirectData(SIP_SUBJECTINFO* pSubjectInfo,
                                        SIP_INDIRECT_DATA* pIndirectData)
 {
-    FIXME("(%p %p) stub\n", pSubjectInfo, pIndirectData);
- 
-    return FALSE;
+    HANDLE file = pSubjectInfo ? pSubjectInfo->hFile : NULL;
+    HCRYPTPROV prov = pSubjectInfo ? pSubjectInfo->hProv : 0;
+    BOOL close_file = FALSE, release_prov = FALSE;
+    HCRYPTHASH hash = 0;
+    BYTE digest[64];
+    DWORD size = sizeof(digest), err = ERROR_SUCCESS;
+    ALG_ID alg;
+
+    TRACE("(%p %p)\n", pSubjectInfo, pIndirectData);
+
+    if (!pSubjectInfo || !pSubjectInfo->pgSubjectType || !pIndirectData)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (memcmp(pSubjectInfo->pgSubjectType, &unknown, sizeof(unknown)))
+    {
+        FIXME("unimplemented for subject type %s\n",
+         debugstr_guid(pSubjectInfo->pgSubjectType));
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (!pIndirectData->DigestAlgorithm.pszObjId ||
+        !(alg = CertOIDToAlgId(pIndirectData->DigestAlgorithm.pszObjId)))
+    {
+        FIXME("unsupported digest algorithm %s\n",
+         debugstr_a(pIndirectData->DigestAlgorithm.pszObjId));
+        SetLastError(NTE_BAD_ALGID);
+        return FALSE;
+    }
+
+    if (!file || file == INVALID_HANDLE_VALUE)
+    {
+        if (!pSubjectInfo->pwsFileName)
+        {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        file = CreateFileW(pSubjectInfo->pwsFileName, GENERIC_READ, FILE_SHARE_READ,
+         NULL, OPEN_EXISTING, 0, NULL);
+        if (file == INVALID_HANDLE_VALUE)
+            return FALSE;
+        close_file = TRUE;
+    }
+
+    if (!prov)
+    {
+        if (!CryptAcquireContextW(&prov, NULL, MS_ENH_RSA_AES_PROV_W, PROV_RSA_AES,
+         CRYPT_VERIFYCONTEXT))
+        {
+            err = GetLastError();
+            goto done;
+        }
+        release_prov = TRUE;
+    }
+
+    if (!CryptCreateHash(prov, alg, 0, 0, &hash))
+        err = GetLastError();
+    else if (!SOFTPUB_HashPEFile(file, hash))
+        err = TRUST_E_NOSIGNATURE;
+    else if (!CryptGetHashParam(hash, HP_HASHVAL, digest, &size, 0))
+        err = GetLastError();
+    else if (size != pIndirectData->Digest.cbData ||
+             memcmp(digest, pIndirectData->Digest.pbData, size))
+        err = TRUST_E_BAD_DIGEST;
+
+done:
+    if (hash)
+        CryptDestroyHash(hash);
+    if (release_prov)
+        CryptReleaseContext(prov, 0);
+    if (close_file)
+        CloseHandle(file);
+    TRACE("returning %08lx\n", err);
+    if (err)
+    {
+        SetLastError(err);
+        return FALSE;
+    }
+    return TRUE;
 }

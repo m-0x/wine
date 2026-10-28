@@ -1739,6 +1739,94 @@ static void test_wintrust_digest(void)
     }
 }
 
+static void test_sip_verify_indirect_data(void)
+{
+    static GUID WVTPolicyGUID = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    static GUID unknown = { 0xC689AAB8, 0x8E78, 0x11D0, { 0x8C,0x47,
+     0x00,0xC0,0x4F,0xC2,0x95,0xEE } };
+    static const struct { const BYTE *data; DWORD length; } tests[] =
+    {
+        { SelfSignedFile32, sizeof(SelfSignedFile32) },
+        { SelfSignedFile64, sizeof(SelfSignedFile64) },
+    };
+    WINTRUST_FILE_INFO file_info = { sizeof(file_info) };
+    WINTRUST_DATA data = { sizeof(data) };
+    SIP_SUBJECTINFO subjinfo = { sizeof(subjinfo) };
+    SIP_INDIRECT_DATA *indirect, bad;
+    CRYPT_PROVIDER_DATA *prov;
+    BYTE bad_digest[64];
+    WCHAR pathW[MAX_PATH];
+    DWORD written;
+    HANDLE file;
+    LONG status;
+    BOOL ret;
+    int i;
+
+    SetLastError(0xdeadbeef);
+    ret = CryptSIPVerifyIndirectData(NULL, NULL);
+    ok(!ret && GetLastError() == ERROR_INVALID_PARAMETER,
+       "expected ERROR_INVALID_PARAMETER, got %d %08lx\n", ret, GetLastError());
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
+    {
+        file = create_temp_file(pathW);
+        ok(file != INVALID_HANDLE_VALUE, "failed to create temporary file\n");
+        ret = WriteFile(file, tests[i].data, tests[i].length, &written, NULL);
+        ok(ret && written == tests[i].length, "WriteFile failed with %lu\n", GetLastError());
+        CloseHandle(file);
+
+        file_info.pcwszFilePath  = pathW;
+        data.dwUIChoice          = WTD_UI_NONE;
+        data.fdwRevocationChecks = WTD_REVOKE_NONE;
+        data.dwUnionChoice       = WTD_CHOICE_FILE;
+        data.pFile               = &file_info;
+        data.dwStateAction       = WTD_STATEACTION_VERIFY;
+        data.dwProvFlags         = WTD_HASH_ONLY_FLAG;
+        status = WinVerifyTrust(NULL, &WVTPolicyGUID, &data);
+        ok(status == S_OK, "test %d: WinVerifyTrust failed: %08lx\n", i, status);
+
+        prov = WTHelperProvDataFromStateData(data.hWVTStateData);
+        ok(prov && prov->pPDSip && prov->pPDSip->psIndirectData, "test %d: no indirect data\n", i);
+        if (prov && prov->pPDSip && prov->pPDSip->psIndirectData)
+        {
+            indirect = prov->pPDSip->psIndirectData;
+
+            file = CreateFileW(pathW, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+            ok(file != INVALID_HANDLE_VALUE, "test %d: CreateFile failed: %lu\n", i, GetLastError());
+
+            subjinfo.pgSubjectType = &unknown;
+            subjinfo.hFile = file;
+            subjinfo.pwsFileName = pathW;
+            subjinfo.DigestAlgorithm = indirect->DigestAlgorithm;
+
+            SetLastError(0xdeadbeef);
+            ret = CryptSIPVerifyIndirectData(&subjinfo, indirect);
+            ok(ret, "test %d: CryptSIPVerifyIndirectData failed: %08lx\n", i, GetLastError());
+
+            ok(indirect->Digest.cbData <= sizeof(bad_digest), "test %d: digest too large\n", i);
+            bad = *indirect;
+            memcpy(bad_digest, indirect->Digest.pbData, indirect->Digest.cbData);
+            bad_digest[0] ^= 0xff;
+            bad.Digest.pbData = bad_digest;
+            SetLastError(0xdeadbeef);
+            ret = CryptSIPVerifyIndirectData(&subjinfo, &bad);
+            ok(!ret && GetLastError() == TRUST_E_BAD_DIGEST,
+               "test %d: expected TRUST_E_BAD_DIGEST, got %d %08lx\n", i, ret, GetLastError());
+
+            /* the file is opened by name if no handle is given */
+            subjinfo.hFile = NULL;
+            ret = CryptSIPVerifyIndirectData(&subjinfo, indirect);
+            ok(ret, "test %d: CryptSIPVerifyIndirectData failed: %08lx\n", i, GetLastError());
+
+            CloseHandle(file);
+        }
+
+        data.dwStateAction = WTD_STATEACTION_CLOSE;
+        WinVerifyTrust(NULL, &WVTPolicyGUID, &data);
+        DeleteFileW(pathW);
+    }
+}
+
 static void test_get_known_usages(void)
 {
     BOOL ret;
@@ -1961,6 +2049,7 @@ START_TEST(softpub)
     test_sip_create_indirect_data();
     test_wintrust();
     test_wintrust_digest();
+    test_sip_verify_indirect_data();
     test_get_known_usages();
     test_WTHelperGetProvCertFromChain();
     test_multiple_signatures();

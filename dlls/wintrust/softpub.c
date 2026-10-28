@@ -26,6 +26,7 @@
 #include "mssip.h"
 #include "softpub.h"
 #include "winnls.h"
+#include "wintrust_priv.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wintrust);
@@ -231,7 +232,7 @@ static BOOL hash_file_data( HANDLE file, DWORD start, DWORD end, HCRYPTHASH hash
 /* See https://www.cs.auckland.ac.nz/~pgut001/pubs/authenticode.txt
  * for details about the hashing.
  */
-static BOOL SOFTPUB_HashPEFile(HANDLE file, HCRYPTHASH hash)
+BOOL SOFTPUB_HashPEFile(HANDLE file, HCRYPTHASH hash)
 {
     DWORD checksum, security_dir;
     IMAGE_DOS_HEADER dos_header;
