@@ -1264,7 +1264,7 @@ HRESULT WINAPI SoftpubAuthenticode(CRYPT_PROVIDER_DATA *data)
         ret = TRUE;
         for (i = 0; ret && i < data->csSigners; i++)
         {
-            BYTE hash[20];
+            BYTE hash[64];
             DWORD size = sizeof(hash);
 
             /* First make sure cert isn't disallowed */
