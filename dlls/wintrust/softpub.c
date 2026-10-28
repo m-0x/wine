@@ -1268,9 +1268,9 @@ HRESULT WINAPI SoftpubAuthenticode(CRYPT_PROVIDER_DATA *data)
             DWORD size = sizeof(hash);
 
             /* First make sure cert isn't disallowed */
-            if ((ret = CertGetCertificateContextProperty(
+            if (CertGetCertificateContextProperty(
              data->pasSigners[i].pasCertChain[0].pCert,
-             CERT_SIGNATURE_HASH_PROP_ID, hash, &size)))
+             CERT_SIGNATURE_HASH_PROP_ID, hash, &size))
             {
                 static const WCHAR disallowedW[] =
                  { 'D','i','s','a','l','l','o','w','e','d',0 };
